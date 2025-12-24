@@ -107,6 +107,21 @@ sudo systemctl restart nginx
 
 ## HTTPS with Let's Encrypt
 
+```bash
+sudo snap install core
+sudo snap refresh core
+sudo snap install --classic certbot
+```
+
+```bash
+sudo certbot --nginx -d real-intel-api.duckdns.org
+```
+Choose:
+✔ Redirect HTTP → HTTPS
+
+Verify:
+https://real-intel-api.duckdns.org/docs
+
 **Issue Certificate (standalone mode):**
 ```bash
 sudo systemctl stop nginx
