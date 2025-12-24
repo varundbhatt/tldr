@@ -1,44 +1,40 @@
-# FastAPI Deployment on EC2 with PM2, Nginx, and HTTPS
+# FastAPI Deployment Guide: EC2 + PM2 + Nginx + HTTPS
 
-This is a comprehensive guide and summary of deploying a FastAPI backend on an AWS EC2 instance, managing it with PM2, exposing it via Nginx, securing it with HTTPS using Let's Encrypt, and integrating with a Vercel frontend.
+Quick reference for deploying FastAPI on AWS EC2 with reverse proxy and SSL.
 
 ---
 
-## 1️⃣ EC2 Setup
+## EC2 Setup
 
-- Launch an Ubuntu EC2 instance.
-- **Security group inbound rules:**
+**Security Group Rules:**
+- SSH (22): Your IP only
+- HTTP (80): 0.0.0.0/0
+- HTTPS (443): 0.0.0.0/0
+- ❌ Don't expose port 8000
 
-| Type  | Protocol | Port | Source       |
-|-------|---------|------|-------------|
-| SSH   | TCP     | 22   | Your IP only |
-| HTTP  | TCP     | 80   | 0.0.0.0/0   |
-| HTTPS | TCP     | 443  | 0.0.0.0/0   |
-
-- **Do not expose Uvicorn port 8000** publicly.
-- Install system packages and PM2:
-
+**Install Dependencies:**
 ```bash
 sudo apt update && sudo apt upgrade -y
 sudo apt install -y python3 python3-venv python3-pip nginx git curl
 curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
 sudo apt install -y nodejs
 sudo npm install -g pm2
+```
 
+---
 
-2️⃣ FastAPI App Setup
+## FastAPI Setup
 
-Clone your repository and create a Python virtual environment:
-
+```bash
 git clone <repo_url> fastapi-app
 cd fastapi-app
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+```
 
-
-Add CORS middleware to allow frontend access:
-
+**Add CORS:**
+```python
 from fastapi.middleware.cors import CORSMiddleware
 
 app.add_middleware(
@@ -47,55 +43,46 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+```
 
+---
 
-Test locally:
+## PM2 Process Management
 
-uvicorn main:app --host 127.0.0.1 --port 8000
-
-3️⃣ PM2 Management
-
-Start FastAPI with PM2:
-
+**Start:**
+```bash
 pm2 start "venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000" \
-  --name fastapi-api \
-  --cwd /home/ubuntu/fastapi-app
+  --name fastapi-api --cwd /home/ubuntu/fastapi-app
 pm2 save
+```
+
+**Manage:**
+```bash
 pm2 status
-
-
-Useful PM2 commands:
-
 pm2 restart fastapi-api
 pm2 stop fastapi-api
-pm2 delete fastapi-api
+```
 
+---
 
-Notes:
+## DNS Setup (DuckDNS)
 
-Bind to 127.0.0.1 so Nginx can proxy traffic.
-
-Always test the app locally before using PM2.
-
-4️⃣ DNS Setup (DuckDNS)
-
-Create a free subdomain: real-intel-api.duckdns.org.
-
-Update the A record to point to your EC2 public IPv4.
-
-Verify propagation before running Certbot:
-
-nslookup real-intel-api.duckdns.org  # should return public IP
-ping -c 1 real-intel-api.duckdns.org
+1. Create subdomain: `real-intel-api.duckdns.org`
+2. Point A record to EC2 public IP
+3. **Verify propagation:**
+```bash
+nslookup real-intel-api.duckdns.org
 curl http://real-intel-api.duckdns.org
+```
 
+⚠️ Internal EC2 DNS may show private IP (172.31.x.x) — this is normal.
 
-Lesson: Internal EC2 DNS may resolve the domain to private IP (172.31.x.x) due to split-horizon DNS — normal.
+---
 
-5️⃣ Nginx Reverse Proxy
+## Nginx Configuration
 
-Create Nginx config (/etc/nginx/sites-available/fastapi):
-
+**Create `/etc/nginx/sites-available/fastapi`:**
+```nginx
 server {
     listen 80;
     server_name real-intel-api.duckdns.org;
@@ -105,32 +92,32 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     }
 }
+```
 
-
-Enable and test:
-
+**Enable:**
+```bash
 sudo ln -s /etc/nginx/sites-available/fastapi /etc/nginx/sites-enabled/
 sudo nginx -t
 sudo systemctl restart nginx
+```
 
-6️⃣ HTTPS via Let's Encrypt
+---
 
-Issue: Certbot Nginx plugin can fail if internal EC2 DNS resolves domain to private IP.
+## HTTPS with Let's Encrypt
 
-Solution: Use standalone mode after DNS propagation:
-
+**Issue Certificate (standalone mode):**
+```bash
 sudo systemctl stop nginx
 sudo certbot certonly --standalone -d real-intel-api.duckdns.org
 sudo systemctl start nginx
+```
 
+⚠️ **Rate limit:** 5 failed attempts/hour. Verify DNS first!
 
-Avoid multiple failed attempts → Let’s Encrypt rate limit: 5 failed authorizations per hour.
-
-Configure Nginx with SSL certificates:
-
+**Update Nginx (`/etc/nginx/sites-available/fastapi`):**
+```nginx
 server {
     listen 443 ssl;
     server_name real-intel-api.duckdns.org;
@@ -151,38 +138,34 @@ server {
     server_name real-intel-api.duckdns.org;
     return 301 https://$host$request_uri;
 }
+```
 
-
-Reload Nginx:
-
+```bash
 sudo nginx -t
 sudo systemctl restart nginx
+```
 
-7️⃣ Testing
+---
 
-From EC2:
+## Testing
 
+**Local:**
+```bash
 curl http://127.0.0.1:8000/docs
+```
+
+**Remote:**
+```bash
 curl https://real-intel-api.duckdns.org
+```
 
+---
 
-From browser/frontend:
+## Key Takeaways
 
-fetch("https://real-intel-api.duckdns.org/your-endpoint")
-
-
-Confirm CORS allows your frontend: https://v0-real-intel.vercel.app.
-
-8️⃣ Key Lessons Learned
-
-DNS propagation matters: Wait until external NS lookup shows the public IP before running Certbot.
-
-Internal EC2 DNS may show private IP: Normal behavior that can confuse Certbot’s Nginx plugin.
-
-PM2 host: Always bind to 127.0.0.1; Nginx proxies external traffic.
-
-Security: Only expose ports 80/443; keep SSH restricted.
-
-Certbot rate limits: Don’t retry multiple times until DNS/configuration are correct.
-
-Test locally first: Ensure FastAPI runs via Uvicorn before PM2 or Nginx.
+✅ Bind FastAPI to `127.0.0.1` (not 0.0.0.0)  
+✅ Wait for DNS propagation before Certbot  
+✅ Use standalone mode if Nginx plugin fails  
+✅ Only expose ports 80/443 publicly  
+✅ Test locally before PM2/Nginx  
+✅ Watch Certbot rate limits
